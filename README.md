@@ -3,8 +3,9 @@
 ## What?
 
 Aggregation summarizes data but can lead to a loss of resolution, complicating reporting. Data may not fit neatly into
-reporting periods, especially when aggregated into regular, calendar-aligned intervals (e.g., daily, weekly). This
-repository focuses on daily, UTC-aligned aggregation and provides algorithms to convert between timestamp and date
+reporting periods, especially when aggregated into regular, calendar-aligned intervals (e.g., daily, weekly).
+
+This repository focuses on daily, UTC-aligned aggregation and provides algorithms to convert between timestamp and date
 ranges for filtering queries.
 
 ## Why?
