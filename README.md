@@ -210,8 +210,8 @@ Demonstrates how a frontend application might use widen to generate an
 `endTime` for a range over the last _n_ days, suitable for use within URL query
 parameters.
 The `startTime` and `endTime` can be reversed, to extract the original
-timestamp + number of days. Both bounds are stable, due to being inclusive any
-in-progress day. This mitigates potential confusion, caused by display of
+timestamp + number of days. Both bounds are stable, due to being inclusive of
+any in-progress day. This mitigates potential confusion, caused by display of
 partially aggregated data, while still allowing display of such data in the
 interim.
 
