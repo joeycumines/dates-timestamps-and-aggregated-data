@@ -77,28 +77,26 @@ reporting periods across misaligned or non-aggregated data.
 
 ## Implementation
 
-TODO: Pseudocode variant might be more useful.
+**Note:** See the below [Scenarios](#scenarios) section for a detailed example.
 
 ### Overview
 
-Implement a "narrowing" timestamp-to-date conversion function, which can generate both fully encompassing and entirely
-within date ranges. Combine both "wide" and "narrow" variants to handle different contexts.
-
-```js
-// Example: Frontend "last 7 days" filter with explicit end time. "Widens" the endTime, capturing any in-progress day.
-// Assumes the backend only matches dates fully within the range, but no impact if it doesn't (widening is idempotent).
-
-const now = new Date();
-const startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-// N.B. omits the idempotency-enforcing check for brevity
-const endTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-
-updateReportContext(startTime.toISOString(), endTime.toISOString());
-```
+tl;dr:
+Implement a "narrowing" timestamp-to-date conversion function.
+Implement "widen" functions that can be applied prior to conversion, to include
+partial days in the range.
+Combine both "wide" and "narrow" variants to handle different contexts.
 
 ### Golang
 
 See [baseline/baseline.go](./baseline/baseline.go) for examples and functions.
+
+See also the
+[API documentation](https://pkg.go.dev/github.com/joeycumines/dates-timestamps-and-aggregated-data),
+for easy navigation and reference. You'll need to click into the `baseline`
+package.
+
+N.B. This was the initial variant, and is therefore the most well tested.
 
 ### PostgreSQL
 
@@ -204,6 +202,30 @@ begin
     return next;
 end;
 $$ language plpgsql;
+```
+
+### JavaScript
+
+Demonstrates how a frontend application might use widen to generate an
+`endTime` for a range over the last _n_ days, suitable for use within URL query
+parameters.
+The `startTime` and `endTime` can be reversed, to extract the original
+timestamp + number of days. Both bounds are stable, due to being inclusive any
+in-progress day. This mitigates potential confusion, caused by display of
+partially aggregated data, while still allowing display of such data in the
+interim.
+
+```js
+const now = new Date();
+const startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+// N.B. logic from widen_end_time, see the other examples
+const endTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+if (endTime.getTime() !== now.getTime()) { // if not already start of UTC day
+    endTime.setUTCDate(endTime.getUTCDate() + 1);
+}
+
+// fetch data, e.g. from a backend API
+updateReportContext(startTime.toISOString(), endTime.toISOString());
 ```
 
 ## Scenarios
