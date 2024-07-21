@@ -1,164 +1,78 @@
-# Dates, Timestamps, and aggregated data
+# Dates, Timestamps, and Aggregated Data
 
 ## What?
 
-Aggregation is a technique that can be used to summarize data.
-This results in a loss of resolution, that can make it difficult to report on,
-especially as the data may not "fit", neatly, into the reporting period.
-Data may be aggregated into arbitrary intervals, but is more commonly
-aggregated into regular(*), calendar-aligned intervals, such as daily, weekly,
-etc. For simplicity, this repository focuses on daily, UTC-aligned aggregation.
-Relevant algorithms are provided, e.g. to convert between timestamp and date
-ranges, passed down as filters to queries.
-
-(*) For added (but extraneous) fun, consider reading Go's
-[time.Time.AddDate](https://pkg.go.dev/time#Time.AddDate) documentation, then
-considering the implications of aggregating on calendrical periods.
+Aggregation summarizes data but can lead to a loss of resolution, complicating reporting. Data may not fit neatly into
+reporting periods, especially when aggregated into regular, calendar-aligned intervals (e.g., daily, weekly). This
+repository focuses on daily, UTC-aligned aggregation and provides algorithms to convert between timestamp and date
+ranges for filtering queries.
 
 ## Why?
 
-1. Filtering aggregated data using is most obviously problematic where the
-   reporting period (range) is smaller than the resolution of the data, e.g.
-   daily data, with a range of one hour
-2. Difficulties may arise even if the data's resolution is significantly
-   greater than the reporting period, if not aligned with it, e.g. reporting on
-   a one-week period, solely using UTC-aligned daily data, where the requested
-   one-week period starts at midnight, in a different time zone
-3. Particularly in the presence of outliers, such misalignment may
-   significantly skew results, e.g. in the context of daily reports, where a
-   large spike might be either missed, or erroneously included in multiple days
-   (along the boundaries of the report - see also "contiguous ranges")
-4. Discrepancies are more likely to be evident when presenting reports built
-   from multiple sources, as their (mis)alignment may vary, e.g. daily data,
-   presented alongside full-resolution data
-5. Any discrepancies can make even unrelated issues extremely difficult to
-   debug, as it is often not obvious at a glance that such discrepancies exist
+1. **Misalignment:** Data resolution and reporting periods often don't match, causing issues. For example, reporting on
+   a one-week period with UTC-aligned daily data starting at midnight in a different time zone.
+2. **Outliers:** Misalignment can skew results, especially with outliers at report boundaries.
+3. **Multiple Sources:** Discrepancies are more evident when reports are built from multiple sources with varying
+   alignments.
+4. **Debugging Challenges:** Discrepancies can obscure unrelated issues, making debugging difficult.
 
-## Representing time ranges
+Note: Issues like ranges smaller than the aggregation period are not addressed here.
+
+## Representing Time Ranges
 
 ### Preface
 
-As noted above, this repository focuses on strategies to handle data aggregated
-daily, from midnight to midnight, in UTC. It is assumed that the aggregated
-data is stored keyed on a `date` field, representing the relevant day, in UTC.
-
-The provided conversion algorithm provides a mechanism to select such data
-using explicit timestamp ranges, which makes it possible to support arbitrary
-reporting periods, even across data that is otherwise misaligned, or not
-aggregated.
+This repository focuses on strategies for handling daily aggregated data (midnight to midnight, UTC), stored with
+a `date` field in UTC. The conversion algorithm allows selecting data using timestamp ranges, supporting arbitrary
+reporting periods across misaligned or non-aggregated data.
 
 ### Considerations
 
-There are three important but unfortunately complex concepts to consider:
+1. **Conversion:**
+    - Converting timestamps to other representations is straightforward.
+    - Converting dates to timestamps requires careful handling of offsets and context.
+    - Local dates (e.g., Java's `OffsetDateTime` truncated to date) should be used cautiously to avoid unexpected
+      results due to time zone differences.
 
-**1. Conversion**
+2. **Contiguous Ranges:**
+    - Important for APIs to ensure ranges are seamless without overlap or gaps.
+    - Example: `[startTime, endTime)`, followed by `[startTime + 1 day, endTime + 1 day)`, guarantees no duplication or
+      gaps.
 
-Converting a timestamp to any other representation does not require additional
-information, so long as the requirements are well-defined.
-Converting a date to a timestamp, however, requires an offset, and specific
-handling, considerate of the meaning of the date, in the context of the data.
-As a special case, it is sometimes useful treat a variation of a timestamp
-representation that retains offset information, such as Java's
-`OffsetDateTime`, as a date, by truncating the time component. Sometimes known
-as "local date", this can be useful for storing or matching against what is
-explicitly a geographically-local date. Local dates should be used with care,
-as attempting to match against dates in different time zones can lead to
-unexpected results.
+3. **Time Continuity:**
+    - Timestamps should be half-open ranges `[startTime, endTime)` to reliably represent continuous time.
+    - Closed ranges can work with nanosecond precision but are generally more challenging.
 
-**2. Contiguous ranges**
+### Definitions
 
-In certain contexts, particularly in APIs, it is important that both timestamp
-and date ranges facilitate contiguous ranges. This means to allow seamless
-concatenation, of consecutive ranges, without overlap.
+- **Date Value (matching against a timestamp range):**
+    - Daily aggregate, e.g., sum of `amount`, where each data point includes measurements between `"${date}T00:00:00Z"`
+      and `"${date + 1 day}T00:00:00Z"`.
 
-For example, assuming `startTime` is aligned with the start of the aggregate,
-`[startTime, endTime)`, followed by
-`[${startTime+1d}, ${endTime+1})`, should guarantee no duplication or gaps.
+- **Timestamp Value (matching against a date range):**
+    - Serialized in RFC 3339 format with nanosecond precision, treated as nanosecond-precision epoch.
 
-For timestamps, i.e. for data that isn't aggregated, this might look like
-`where values.timestamp >= startTime and values.timestamp < endTime`. For
-dates, this might look like `where values.date between startDate and endDate`.
+- **Date Range (matching against a timestamp value):**
+    - Closed range `[startDate, endDate]`, inclusive of entire days in UTC. Equivalent timestamp range
+      is `["${startDate}T00:00:00Z", "${endDate + 1 day}T00:00:00Z")`.
 
-**3. Time is continuous**
-
-Without relying on specific implementation details, an arbitrary-precision
-timestamp range can only reliably represent a date range when defined as a
-half-open range, like `[startTime, endTime)` (inclusive, exclusive).
-Since time is continuous, and dates can be considered discrete (in this
-context), it is challenging(*) to represent a date range (using timestamps) as
-a closed range, like `[startTime, endTime]` (both inclusive).
-
-(*) In practice, a closed range of nanosecond precision would likely work
-end-to-end in most scenarios.
-
-**The definitions that follow are _only_ in the context of this repository.**
-These are not even close to the only valid patterns for representing time
-ranges.
-
-### Date value (matching against a timestamp range)
-
-To provide a more specific example of a daily aggregate, consider sums of
-an arbitrary quantity, e.g. `amount`, where each datapoint is inclusive of all
-measurements, given `timestamp` of measurement, and `date` of the
-aggregate, such that
-`"${date}T00:00:00Z" <= timestamp < "${date + 1 day}T00:00:00Z"`.
-
-### Timestamp value (matching against a date range)
-
-Timestamps are defined as being serialized in RFC 3339 format, with nanosecond
-precision. While timestamps include a fixed offset (or `Z`, representing
-`+00:00`), the serialized representation is to be explicitly treated as
-entirely irrelevant, i.e. timestamp values should be treated no differently to
-an equivalent nanosecond-precision epoch.
-
-### Date range (matching against a timestamp value)
-
-A date range is defined as a closed range, like `[startDate, endDate]`, with
-the meaning of "inclusive of the entire day of `startDate`, and the entire day
-of `endDate`, in UTC". Using the scheme defined above, there are no ambiguities
-in terms of conversion. For the avoidance of doubt, the equivalent
-timestamp range is
-`["${startDate}T00:00:00Z", "${endDate + 1 day}T00:00:00Z")`.
-
-### Timestamp range (matching against a date value)
-
-A timestamp range is defined as a half-open range, like `[startTime, endTime)`,
-with the meaning of "inclusive of `startTime`, and exclusive of `endTime`,
-where both values are to be treated solely as relative offsets, from the Unix
-epoch, with nanosecond precision".
-
-Converting a timestamp range is straightforward but a little unintuitive, see
-the algorithms section for more detail.
+- **Timestamp Range (matching against a date value):**
+    - Half-open range `[startTime, endTime)`, inclusive of `startTime` and exclusive of `endTime`.
 
 ## Algorithms
 
-### Trivial cases
+### Trivial Cases
 
-The result is trivial if either of the following are true:
+- Both range and value are identical representations (or aligned with UTC).
+- All values are aligned (e.g., `T00:00:00+00:00`).
 
-- Both range and value are identical representations, and that representation
-  is one of the variants defined above (or similar, e.g. substituting UTC for
-  another fixed-offset zone)
-- The range and all possible values are aligned (in our example, all
-  `T00:00:00+00:00` aligned)
+### Conversions
 
-### Date value, timestamp range
+- **Date value, timestamp range:**
+    - Select dates where possible timestamps implied by the date value are entirely within the range.
 
-Select only dates where the possible timestamps implied by the date value are
-**entirely** within the range. Requires rounding towards the middle of the
-range (narrowing the filter), in order to avoid gaps or overlaps.
-TODO: Update me
-
-See also `convertTimestampRangeToDates`, below.
-
-### Timestamp value, date range
-
-The date range is converted to the equivalent timestamp range. Lossless, but
-requires a half-open range, as discussed above. The most error-prone part is
-likely the logic to initialise the implied timestamps correctly at the start of
-the day, due to time zone considerations (in this case, in UTC).
-
-See also `convertDateRangeToTimestamps`, below.
+- **Timestamp value, date range:**
+    - Convert date range to an equivalent timestamp range, using half-open ranges.
 
 ## Implementation
 
@@ -166,47 +80,26 @@ TODO: Pseudocode variant might be more useful.
 
 ### Overview
 
-The suggested pattern is to implement a "narrowing" timestamp -> date
-conversion function, as it is then trivial to use that as a base to generate
-both the date range that fully encompasses the timestamp range, and the range
-of all dates that are entirely within the timestamp range. In the example
-implementations, the "widening" functions are used as part of determining the
-former.
-
-N.B. The wide variant may select data that is not entirely within the range,
-and therefore may surface data in more than one contiguous range. The narrow
-variant will only select data that is entirely within the range, which may
-introduce "gaps", or fail to select data, even given contiguous ranges.
-
-In certain contexts it may be desirable to combine the two, or even perform
-pre-emptive normalisation. For example, generating a stable URL for a report,
-with a "last X days" filter, determined using the local (browser) time zone.
+Implement a "narrowing" timestamp-to-date conversion function, which can generate both fully encompassing and entirely
+within date ranges. Combine both "wide" and "narrow" variants to handle different contexts.
 
 ```js
-// one option to implement a "last 7 days" filter, with explicit end time
+// Example: "last 7 days" filter with explicit end time
+
 const now = new Date();
-const startTime = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
-// widen the end time to the start of the next day, if necessary
-const endTime = new Date(0);
-endTime.setUTCFullYear(now.getUTCFullYear());
-endTime.setUTCMonth(now.getUTCMonth());
-endTime.setUTCDate(now.getUTCDate());
-if (endTime.getTime() !== now.getTime()) {
-    endTime.setUTCDate(endTime.getUTCDate() + 1);
-}
-// like updateReportContext(startTime.toISOString(), endTime.toISOString())
+const startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+const endTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+
+updateReportContext(startTime.toISOString(), endTime.toISOString());
 ```
 
 ### Golang
 
-See [baseline/baseline.go](./baseline/baseline.go), notably
-`ExampleTimestampToDate`, `ExampleDateToTimestamp`, and the `Widen*` and
-`Matches*` functions.
+See [baseline/baseline.go](./baseline/baseline.go) for examples and functions.
 
 ### PostgreSQL
 
-Fun fact, I've just learnt that `timestamp` is not an "instant" and should be
-avoided for use _as a timestamp_, as it is more akin to a "local date".
+Example functions for conversion and widening ranges:
 
 ```postgresql
 -- returns the first and last (UTC) date fully within the timestamp range, preserving null values
@@ -385,12 +278,15 @@ the start and end were "wide" (extended to the encapsulating day), or "narrow"
 (only inclusive of fully-encapsulated days).
 
 As a baseline, a deliberately naive timestamp -> date implementation was used,
-suffixed with `_l` (for local). While this implementation _appears_ somewhat
+suffixed with `_l` (for local). While this implementation _appears_ reasonably
 correct, it will vary, based on the passed timezone, and will only perform
 roughly equivalently for callers providing UTC-equivalent timestamp ranges.
-For all other data, the result set may be significantly skewed, as shown by
+For all other cases, the result set may be significantly skewed, as shown by
 the difference between `ad_n` and `ad_l`, for the `afternoon3D...` group
 (which is a 3d period, starting from `T15:00:00-11:35`).
+
+N.B. Skew is relative to the `actual`, correct result. See the per-day table
+for a more detailed breakdown.
 
 | group          | actual | bd_w   | bd_wn  | bd_nw  | ad_n   | ad_w   | ad_wn  | ad_nw  | ad_l  |
 |----------------|--------|--------|--------|--------|--------|--------|--------|--------|-------|
@@ -461,33 +357,33 @@ gantt
 
 ###### Table
 
-| name           | start_time           | end_time             | wide_start_time      | wide_end_time        | start_date | end_date   | wide_start_date | wide_end_date | local_start_date | local_end_date | bd_n_amount | bd_w_amount | bd_wn_amount | bd_nw_amount | bd_l_amount | ad_n_amount | ad_w_amount | ad_wn_amount | ad_nw_amount | ad_l_amount | bd_n_ids                     | bd_w_ids                     | bd_wn_ids                    | bd_nw_ids                    | bd_l_ids              | ad_n_ids                  | ad_w_ids                     | ad_wn_ids                    | ad_nw_ids                 | ad_l_ids              |
-|----------------|----------------------|----------------------|----------------------|----------------------|------------|------------|-----------------|---------------|------------------|----------------|-------------|-------------|--------------|--------------|-------------|-------------|-------------|--------------|--------------|-------------|------------------------------|------------------------------|------------------------------|------------------------------|-----------------------|---------------------------|------------------------------|------------------------------|---------------------------|-----------------------|
-| aest-1         | 2024-07-14 14:00...Z | 2024-07-15 14:00...Z | 2024-07-14 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 | 2024-07-14 | 2024-07-14      | 2024-07-15    | 2024-07-15       | 2024-07-15     |             |             |              |              |             |             |             |              |              |             |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
-| aest-2         | 2024-07-15 14:00...Z | 2024-07-16 14:00...Z | 2024-07-15 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-15 | 2024-07-15      | 2024-07-16    | 2024-07-16       | 2024-07-16     | 12.21       | 12.21       | 12.21        | 12.21        | 12.21       |             | 12.21       |              | 12.21        | 12.21       | [1]                          | [1]                          | [1]                          | [1]                          | [1]                   |                           | [1]                          |                              | [1]                       | [1]                   |
-| aest-3         | 2024-07-16 14:00...Z | 2024-07-17 14:00...Z | 2024-07-16 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-16 | 2024-07-16      | 2024-07-17    | 2024-07-17       | 2024-07-17     | 29.65       | 41.86       | 41.86        | 29.65        | 29.65       |             | 41.86       | 12.21        | 29.65        | 29.65       | [2]                          | [1, 2]                       | [1, 2]                       | [2]                          | [2]                   |                           | [1, 2]                       | [1]                          | [2]                       | [2]                   |
-| aest-4         | 2024-07-17 14:00...Z | 2024-07-18 14:00...Z | 2024-07-17 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-17 | 2024-07-17      | 2024-07-18    | 2024-07-18       | 2024-07-18     | 142.15      | 279.69      | 171.8        | 250.04       | 250.04      |             | 279.69      | 29.65        | 250.04       | 250.04      | [3, 4]                       | [2, 3, 4, 5, 6, 7]           | [2, 3, 4]                    | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]       |                           | [2, 3, 4, 5, 6, 7]           | [2]                          | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]       |
-| aest-5         | 2024-07-18 14:00...Z | 2024-07-19 14:00...Z | 2024-07-18 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-18 | 2024-07-18      | 2024-07-19    | 2024-07-19       | 2024-07-19     | 200.64      | 464.84      | 342.79       | 322.69       | 214.8       |             | 464.84      | 250.04       | 214.8        | 214.8       | [5, 6, 7, 8]                 | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7, 8]           | [5, 6, 7, 8, 9, 10]          | [8, 9, 10]            |                           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]              | [8, 9, 10]                | [8, 9, 10]            |
-| aest-6         | 2024-07-19 14:00...Z | 2024-07-20 14:00...Z | 2024-07-19 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-19 | 2024-07-19      | 2024-07-20    | 2024-07-20       | 2024-07-20     | 122.05      | 214.8       | 214.8        | 122.05       |             |             | 214.8       | 214.8        |              |             | [9, 10]                      | [8, 9, 10]                   | [8, 9, 10]                   | [9, 10]                      |                       |                           | [8, 9, 10]                   | [8, 9, 10]                   |                           |                       |
-| afternoon-1    | 2024-07-15 05:00...Z | 2024-07-16 05:00...Z | 2024-07-15 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-15 | 2024-07-15      | 2024-07-16    | 2024-07-15       | 2024-07-15     | 12.21       | 12.21       | 12.21        | 12.21        |             |             | 12.21       |              | 12.21        |             | [1]                          | [1]                          | [1]                          | [1]                          |                       |                           | [1]                          |                              | [1]                       |                       |
-| afternoon-2    | 2024-07-16 05:00...Z | 2024-07-17 05:00...Z | 2024-07-16 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-16 | 2024-07-16      | 2024-07-17    | 2024-07-16       | 2024-07-16     |             | 41.86       | 12.21        | 29.65        | 12.21       |             | 41.86       | 12.21        | 29.65        | 12.21       |                              | [1, 2]                       | [1]                          | [2]                          | [1]                   |                           | [1, 2]                       | [1]                          | [2]                       | [1]                   |
-| afternoon-3    | 2024-07-17 05:00...Z | 2024-07-18 05:00...Z | 2024-07-17 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-17 | 2024-07-17      | 2024-07-18    | 2024-07-17       | 2024-07-17     | 29.65       | 279.69      | 29.65        | 279.69       | 29.65       |             | 279.69      | 29.65        | 250.04       | 29.65       | [2]                          | [2, 3, 4, 5, 6, 7]           | [2]                          | [2, 3, 4, 5, 6, 7]           | [2]                   |                           | [2, 3, 4, 5, 6, 7]           | [2]                          | [3, 4, 5, 6, 7]           | [2]                   |
-| afternoon-4    | 2024-07-18 05:00...Z | 2024-07-19 05:00...Z | 2024-07-18 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-18 | 2024-07-18      | 2024-07-19    | 2024-07-18       | 2024-07-18     | 342.79      | 464.84      | 342.79       | 464.84       | 250.04      |             | 464.84      | 250.04       | 214.8        | 250.04      | [3, 4, 5, 6, 7, 8]           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7, 8]           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]       |                           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]              | [8, 9, 10]                | [3, 4, 5, 6, 7]       |
-| afternoon-5    | 2024-07-19 05:00...Z | 2024-07-20 05:00...Z | 2024-07-19 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-19 | 2024-07-19      | 2024-07-20    | 2024-07-19       | 2024-07-19     | 122.05      | 214.8       | 214.8        | 122.05       | 214.8       |             | 214.8       | 214.8        |              | 214.8       | [9, 10]                      | [8, 9, 10]                   | [8, 9, 10]                   | [9, 10]                      | [8, 9, 10]            |                           | [8, 9, 10]                   | [8, 9, 10]                   |                           | [8, 9, 10]            |
-| afternoon-6    | 2024-07-20 05:00...Z | 2024-07-21 05:00...Z | 2024-07-20 00:00...Z | 2024-07-22 00:00...Z | 2024-07-21 | 2024-07-20 | 2024-07-20      | 2024-07-21    | 2024-07-20       | 2024-07-20     |             |             |              |              |             |             |             |              |              |             |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
-| afternoon3D... | 2024-07-17 02:35...Z | 2024-07-20 02:35...Z | 2024-07-17 00:00...Z | 2024-07-21 00:00...Z | 2024-07-18 | 2024-07-19 | 2024-07-17      | 2024-07-20    | 2024-07-16       | 2024-07-18     | 494.49      | 494.49      | 494.49       | 494.49       | 291.9       | 464.84      | 494.49      | 494.49       | 464.84       | 291.9       | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [1, 2, 3, 4, 5, 6, 7] | [3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [3, 4, 5, 6, 7, 8, 9, 10] | [1, 2, 3, 4, 5, 6, 7] |
-| morning-1      | 2024-07-14 23:00...Z | 2024-07-15 23:00...Z | 2024-07-14 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 | 2024-07-14 | 2024-07-14      | 2024-07-15    | 2024-07-15       | 2024-07-15     |             |             |              |              |             |             |             |              |              |             |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
-| morning-2      | 2024-07-15 23:00...Z | 2024-07-16 23:00...Z | 2024-07-15 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-15 | 2024-07-15      | 2024-07-16    | 2024-07-16       | 2024-07-16     | 12.21       | 12.21       | 12.21        | 12.21        | 12.21       |             | 12.21       |              | 12.21        | 12.21       | [1]                          | [1]                          | [1]                          | [1]                          | [1]                   |                           | [1]                          |                              | [1]                       | [1]                   |
-| morning-3      | 2024-07-16 23:00...Z | 2024-07-17 23:00...Z | 2024-07-16 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-16 | 2024-07-16      | 2024-07-17    | 2024-07-17       | 2024-07-17     | 29.65       | 41.86       | 41.86        | 29.65        | 29.65       |             | 41.86       | 12.21        | 29.65        | 29.65       | [2]                          | [1, 2]                       | [1, 2]                       | [2]                          | [2]                   |                           | [1, 2]                       | [1]                          | [2]                       | [2]                   |
-| morning-4      | 2024-07-17 23:00...Z | 2024-07-18 23:00...Z | 2024-07-17 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-17 | 2024-07-17      | 2024-07-18    | 2024-07-18       | 2024-07-18     | 250.04      | 279.69      | 279.69       | 250.04       | 250.04      |             | 279.69      | 29.65        | 250.04       | 250.04      | [3, 4, 5, 6, 7]              | [2, 3, 4, 5, 6, 7]           | [2, 3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]       |                           | [2, 3, 4, 5, 6, 7]           | [2]                          | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]       |
-| morning-5      | 2024-07-18 23:00...Z | 2024-07-19 23:00...Z | 2024-07-18 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-18 | 2024-07-18      | 2024-07-19    | 2024-07-19       | 2024-07-19     | 214.8       | 464.84      | 464.84       | 214.8        | 214.8       |             | 464.84      | 250.04       | 214.8        | 214.8       | [8, 9, 10]                   | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7, 8, 9, 10]    | [8, 9, 10]                   | [8, 9, 10]            |                           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]              | [8, 9, 10]                | [8, 9, 10]            |
-| morning-6      | 2024-07-19 23:00...Z | 2024-07-20 23:00...Z | 2024-07-19 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-19 | 2024-07-19      | 2024-07-20    | 2024-07-20       | 2024-07-20     |             | 214.8       | 214.8        |              |             |             | 214.8       | 214.8        |              |             |                              | [8, 9, 10]                   | [8, 9, 10]                   |                              |                       |                           | [8, 9, 10]                   | [8, 9, 10]                   |                           |                       |
-| utc-1          | 2024-07-15 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 | 2024-07-15 | 2024-07-15      | 2024-07-15    | 2024-07-15       | 2024-07-15     |             |             |              |              |             |             |             |              |              |             |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
-| utc-2          | 2024-07-16 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-16 | 2024-07-16      | 2024-07-16    | 2024-07-16       | 2024-07-16     | 12.21       | 12.21       | 12.21        | 12.21        | 12.21       | 12.21       | 12.21       | 12.21        | 12.21        | 12.21       | [1]                          | [1]                          | [1]                          | [1]                          | [1]                   | [1]                       | [1]                          | [1]                          | [1]                       | [1]                   |
-| utc-3          | 2024-07-17 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-17 | 2024-07-17      | 2024-07-17    | 2024-07-17       | 2024-07-17     | 29.65       | 29.65       | 29.65        | 29.65        | 29.65       | 29.65       | 29.65       | 29.65        | 29.65        | 29.65       | [2]                          | [2]                          | [2]                          | [2]                          | [2]                   | [2]                       | [2]                          | [2]                          | [2]                       | [2]                   |
-| utc-4          | 2024-07-18 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-18 | 2024-07-18      | 2024-07-18    | 2024-07-18       | 2024-07-18     | 250.04      | 250.04      | 250.04       | 250.04       | 250.04      | 250.04      | 250.04      | 250.04       | 250.04       | 250.04      | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]       | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]       |
-| utc-5          | 2024-07-19 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-19 | 2024-07-19      | 2024-07-19    | 2024-07-19       | 2024-07-19     | 214.8       | 214.8       | 214.8        | 214.8        | 214.8       | 214.8       | 214.8       | 214.8        | 214.8        | 214.8       | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]            | [8, 9, 10]                | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]                | [8, 9, 10]            |
-| utc-6          | 2024-07-20 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-20 | 2024-07-20      | 2024-07-20    | 2024-07-20       | 2024-07-20     |             |             |              |              |             |             |             |              |              |             |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
+| name           | start_time           | end_time             | wide_start_time      | wide_end_time        | start_date | end_date   | wide_start_date | wide_end_date | local_start_date | local_end_date | actual | bd_w   | bd_wn  | bd_nw  | bd_l   | ad_n   | ad_w   | ad_wn  | ad_nw  | ad_l   | bd_n_ids                     | bd_w_ids                     | bd_wn_ids                    | bd_nw_ids                    | bd_l_ids              | ad_n_ids                  | ad_w_ids                     | ad_wn_ids                    | ad_nw_ids                 | ad_l_ids              |
+|----------------|----------------------|----------------------|----------------------|----------------------|------------|------------|-----------------|---------------|------------------|----------------|--------|--------|--------|--------|--------|--------|--------|--------|--------|--------|------------------------------|------------------------------|------------------------------|------------------------------|-----------------------|---------------------------|------------------------------|------------------------------|---------------------------|-----------------------|
+| aest-1         | 2024-07-14 14:00...Z | 2024-07-15 14:00...Z | 2024-07-14 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 | 2024-07-14 | 2024-07-14      | 2024-07-15    | 2024-07-15       | 2024-07-15     |        |        |        |        |        |        |        |        |        |        |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
+| aest-2         | 2024-07-15 14:00...Z | 2024-07-16 14:00...Z | 2024-07-15 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-15 | 2024-07-15      | 2024-07-16    | 2024-07-16       | 2024-07-16     | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  |        | 12.21  |        | 12.21  | 12.21  | [1]                          | [1]                          | [1]                          | [1]                          | [1]                   |                           | [1]                          |                              | [1]                       | [1]                   |
+| aest-3         | 2024-07-16 14:00...Z | 2024-07-17 14:00...Z | 2024-07-16 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-16 | 2024-07-16      | 2024-07-17    | 2024-07-17       | 2024-07-17     | 29.65  | 41.86  | 41.86  | 29.65  | 29.65  |        | 41.86  | 12.21  | 29.65  | 29.65  | [2]                          | [1, 2]                       | [1, 2]                       | [2]                          | [2]                   |                           | [1, 2]                       | [1]                          | [2]                       | [2]                   |
+| aest-4         | 2024-07-17 14:00...Z | 2024-07-18 14:00...Z | 2024-07-17 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-17 | 2024-07-17      | 2024-07-18    | 2024-07-18       | 2024-07-18     | 142.15 | 279.69 | 171.8  | 250.04 | 250.04 |        | 279.69 | 29.65  | 250.04 | 250.04 | [3, 4]                       | [2, 3, 4, 5, 6, 7]           | [2, 3, 4]                    | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]       |                           | [2, 3, 4, 5, 6, 7]           | [2]                          | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]       |
+| aest-5         | 2024-07-18 14:00...Z | 2024-07-19 14:00...Z | 2024-07-18 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-18 | 2024-07-18      | 2024-07-19    | 2024-07-19       | 2024-07-19     | 200.64 | 464.84 | 342.79 | 322.69 | 214.8  |        | 464.84 | 250.04 | 214.8  | 214.8  | [5, 6, 7, 8]                 | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7, 8]           | [5, 6, 7, 8, 9, 10]          | [8, 9, 10]            |                           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]              | [8, 9, 10]                | [8, 9, 10]            |
+| aest-6         | 2024-07-19 14:00...Z | 2024-07-20 14:00...Z | 2024-07-19 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-19 | 2024-07-19      | 2024-07-20    | 2024-07-20       | 2024-07-20     | 122.05 | 214.8  | 214.8  | 122.05 |        |        | 214.8  | 214.8  |        |        | [9, 10]                      | [8, 9, 10]                   | [8, 9, 10]                   | [9, 10]                      |                       |                           | [8, 9, 10]                   | [8, 9, 10]                   |                           |                       |
+| afternoon-1    | 2024-07-15 05:00...Z | 2024-07-16 05:00...Z | 2024-07-15 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-15 | 2024-07-15      | 2024-07-16    | 2024-07-15       | 2024-07-15     | 12.21  | 12.21  | 12.21  | 12.21  |        |        | 12.21  |        | 12.21  |        | [1]                          | [1]                          | [1]                          | [1]                          |                       |                           | [1]                          |                              | [1]                       |                       |
+| afternoon-2    | 2024-07-16 05:00...Z | 2024-07-17 05:00...Z | 2024-07-16 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-16 | 2024-07-16      | 2024-07-17    | 2024-07-16       | 2024-07-16     |        | 41.86  | 12.21  | 29.65  | 12.21  |        | 41.86  | 12.21  | 29.65  | 12.21  |                              | [1, 2]                       | [1]                          | [2]                          | [1]                   |                           | [1, 2]                       | [1]                          | [2]                       | [1]                   |
+| afternoon-3    | 2024-07-17 05:00...Z | 2024-07-18 05:00...Z | 2024-07-17 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-17 | 2024-07-17      | 2024-07-18    | 2024-07-17       | 2024-07-17     | 29.65  | 279.69 | 29.65  | 279.69 | 29.65  |        | 279.69 | 29.65  | 250.04 | 29.65  | [2]                          | [2, 3, 4, 5, 6, 7]           | [2]                          | [2, 3, 4, 5, 6, 7]           | [2]                   |                           | [2, 3, 4, 5, 6, 7]           | [2]                          | [3, 4, 5, 6, 7]           | [2]                   |
+| afternoon-4    | 2024-07-18 05:00...Z | 2024-07-19 05:00...Z | 2024-07-18 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-18 | 2024-07-18      | 2024-07-19    | 2024-07-18       | 2024-07-18     | 342.79 | 464.84 | 342.79 | 464.84 | 250.04 |        | 464.84 | 250.04 | 214.8  | 250.04 | [3, 4, 5, 6, 7, 8]           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7, 8]           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]       |                           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]              | [8, 9, 10]                | [3, 4, 5, 6, 7]       |
+| afternoon-5    | 2024-07-19 05:00...Z | 2024-07-20 05:00...Z | 2024-07-19 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-19 | 2024-07-19      | 2024-07-20    | 2024-07-19       | 2024-07-19     | 122.05 | 214.8  | 214.8  | 122.05 | 214.8  |        | 214.8  | 214.8  |        | 214.8  | [9, 10]                      | [8, 9, 10]                   | [8, 9, 10]                   | [9, 10]                      | [8, 9, 10]            |                           | [8, 9, 10]                   | [8, 9, 10]                   |                           | [8, 9, 10]            |
+| afternoon-6    | 2024-07-20 05:00...Z | 2024-07-21 05:00...Z | 2024-07-20 00:00...Z | 2024-07-22 00:00...Z | 2024-07-21 | 2024-07-20 | 2024-07-20      | 2024-07-21    | 2024-07-20       | 2024-07-20     |        |        |        |        |        |        |        |        |        |        |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
+| afternoon3D... | 2024-07-17 02:35...Z | 2024-07-20 02:35...Z | 2024-07-17 00:00...Z | 2024-07-21 00:00...Z | 2024-07-18 | 2024-07-19 | 2024-07-17      | 2024-07-20    | 2024-07-16       | 2024-07-18     | 494.49 | 494.49 | 494.49 | 494.49 | 291.9  | 464.84 | 494.49 | 494.49 | 464.84 | 291.9  | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [1, 2, 3, 4, 5, 6, 7] | [3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [2, 3, 4, 5, 6, 7, 8, 9, 10] | [3, 4, 5, 6, 7, 8, 9, 10] | [1, 2, 3, 4, 5, 6, 7] |
+| morning-1      | 2024-07-14 23:00...Z | 2024-07-15 23:00...Z | 2024-07-14 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 | 2024-07-14 | 2024-07-14      | 2024-07-15    | 2024-07-15       | 2024-07-15     |        |        |        |        |        |        |        |        |        |        |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
+| morning-2      | 2024-07-15 23:00...Z | 2024-07-16 23:00...Z | 2024-07-15 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-15 | 2024-07-15      | 2024-07-16    | 2024-07-16       | 2024-07-16     | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  |        | 12.21  |        | 12.21  | 12.21  | [1]                          | [1]                          | [1]                          | [1]                          | [1]                   |                           | [1]                          |                              | [1]                       | [1]                   |
+| morning-3      | 2024-07-16 23:00...Z | 2024-07-17 23:00...Z | 2024-07-16 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-16 | 2024-07-16      | 2024-07-17    | 2024-07-17       | 2024-07-17     | 29.65  | 41.86  | 41.86  | 29.65  | 29.65  |        | 41.86  | 12.21  | 29.65  | 29.65  | [2]                          | [1, 2]                       | [1, 2]                       | [2]                          | [2]                   |                           | [1, 2]                       | [1]                          | [2]                       | [2]                   |
+| morning-4      | 2024-07-17 23:00...Z | 2024-07-18 23:00...Z | 2024-07-17 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-17 | 2024-07-17      | 2024-07-18    | 2024-07-18       | 2024-07-18     | 250.04 | 279.69 | 279.69 | 250.04 | 250.04 |        | 279.69 | 29.65  | 250.04 | 250.04 | [3, 4, 5, 6, 7]              | [2, 3, 4, 5, 6, 7]           | [2, 3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]       |                           | [2, 3, 4, 5, 6, 7]           | [2]                          | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]       |
+| morning-5      | 2024-07-18 23:00...Z | 2024-07-19 23:00...Z | 2024-07-18 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-18 | 2024-07-18      | 2024-07-19    | 2024-07-19       | 2024-07-19     | 214.8  | 464.84 | 464.84 | 214.8  | 214.8  |        | 464.84 | 250.04 | 214.8  | 214.8  | [8, 9, 10]                   | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7, 8, 9, 10]    | [8, 9, 10]                   | [8, 9, 10]            |                           | [3, 4, 5, 6, 7, 8, 9, 10]    | [3, 4, 5, 6, 7]              | [8, 9, 10]                | [8, 9, 10]            |
+| morning-6      | 2024-07-19 23:00...Z | 2024-07-20 23:00...Z | 2024-07-19 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-19 | 2024-07-19      | 2024-07-20    | 2024-07-20       | 2024-07-20     |        | 214.8  | 214.8  |        |        |        | 214.8  | 214.8  |        |        |                              | [8, 9, 10]                   | [8, 9, 10]                   |                              |                       |                           | [8, 9, 10]                   | [8, 9, 10]                   |                           |                       |
+| utc-1          | 2024-07-15 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 00:00...Z | 2024-07-16 00:00...Z | 2024-07-15 | 2024-07-15 | 2024-07-15      | 2024-07-15    | 2024-07-15       | 2024-07-15     |        |        |        |        |        |        |        |        |        |        |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
+| utc-2          | 2024-07-16 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 00:00...Z | 2024-07-17 00:00...Z | 2024-07-16 | 2024-07-16 | 2024-07-16      | 2024-07-16    | 2024-07-16       | 2024-07-16     | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  | 12.21  | [1]                          | [1]                          | [1]                          | [1]                          | [1]                   | [1]                       | [1]                          | [1]                          | [1]                       | [1]                   |
+| utc-3          | 2024-07-17 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 00:00...Z | 2024-07-18 00:00...Z | 2024-07-17 | 2024-07-17 | 2024-07-17      | 2024-07-17    | 2024-07-17       | 2024-07-17     | 29.65  | 29.65  | 29.65  | 29.65  | 29.65  | 29.65  | 29.65  | 29.65  | 29.65  | 29.65  | [2]                          | [2]                          | [2]                          | [2]                          | [2]                   | [2]                       | [2]                          | [2]                          | [2]                       | [2]                   |
+| utc-4          | 2024-07-18 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 00:00...Z | 2024-07-19 00:00...Z | 2024-07-18 | 2024-07-18 | 2024-07-18      | 2024-07-18    | 2024-07-18       | 2024-07-18     | 250.04 | 250.04 | 250.04 | 250.04 | 250.04 | 250.04 | 250.04 | 250.04 | 250.04 | 250.04 | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]       | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]              | [3, 4, 5, 6, 7]           | [3, 4, 5, 6, 7]       |
+| utc-5          | 2024-07-19 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 00:00...Z | 2024-07-20 00:00...Z | 2024-07-19 | 2024-07-19 | 2024-07-19      | 2024-07-19    | 2024-07-19       | 2024-07-19     | 214.8  | 214.8  | 214.8  | 214.8  | 214.8  | 214.8  | 214.8  | 214.8  | 214.8  | 214.8  | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]            | [8, 9, 10]                | [8, 9, 10]                   | [8, 9, 10]                   | [8, 9, 10]                | [8, 9, 10]            |
+| utc-6          | 2024-07-20 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 00:00...Z | 2024-07-21 00:00...Z | 2024-07-20 | 2024-07-20 | 2024-07-20      | 2024-07-20    | 2024-07-20       | 2024-07-20     |        |        |        |        |        |        |        |        |        |        |                              |                              |                              |                              |                       |                           |                              |                              |                           |                       |
 
 ##### Queries
 
@@ -504,17 +400,17 @@ with per_day as ( select timestamp_ranges.name,
                          timestamp_ranges.wide_end_date,
                          timestamp_ranges.local_start_date,
                          timestamp_ranges.local_end_date,
-                         bd_n.amount  as bd_n_amount,
-                         bd_w.amount  as bd_w_amount,
-                         bd_wn.amount as bd_wn_amount,
-                         bd_nw.amount as bd_nw_amount,
-                         bd_l.amount  as bd_l_amount,
-                         ad_n.amount  as ad_n_amount,
-                         ad_w.amount  as ad_w_amount,
-                         ad_wn.amount as ad_wn_amount,
-                         ad_nw.amount as ad_nw_amount,
-                         ad_l.amount  as ad_l_amount,
-                         bd_n.ids     as bd_n_ids,
+                         bd_n.amount  as actual,
+                         bd_w.amount  as bd_w,
+                         bd_wn.amount as bd_wn,
+                         bd_nw.amount as bd_nw,
+                         bd_l.amount  as bd_l,
+                         ad_n.amount  as ad_n,
+                         ad_w.amount  as ad_w,
+                         ad_wn.amount as ad_wn,
+                         ad_nw.amount as ad_nw,
+                         ad_l.amount  as ad_l,
+                         bd_n.ids     as actual_ids,
                          bd_w.ids     as bd_w_ids,
                          bd_wn.ids    as bd_wn_ids,
                          bd_nw.ids    as bd_nw_ids,
@@ -620,19 +516,19 @@ with per_day as ( select timestamp_ranges.name,
                                 where (timestamp at time zone 'UTC')::date between timestamp_ranges.local_start_date and timestamp_ranges.local_end_date) ad_l
                   order by substring(name from '^[^-]*'), start_time, end_time ),
      amounts_total as ( select substring(per_day.name from '^[^-]*') as grp,
-                               sum(bd_n_amount)                      as bd_n_amount,
-                               sum(bd_w_amount)                      as bd_w_amount,
-                               sum(bd_wn_amount)                     as bd_wn_amount,
-                               sum(bd_nw_amount)                     as bd_nw_amount,
-                               sum(bd_l_amount)                      as bd_l_amount,
-                               sum(ad_n_amount)                      as ad_n_amount,
-                               sum(ad_w_amount)                      as ad_w_amount,
-                               sum(ad_wn_amount)                     as ad_wn_amount,
-                               sum(ad_nw_amount)                     as ad_nw_amount,
-                               sum(ad_l_amount)                      as ad_l_amount
+                               sum(actual)                           as actual,
+                               sum(bd_w)                             as bd_w,
+                               sum(bd_wn)                            as bd_wn,
+                               sum(bd_nw)                            as bd_nw,
+                               sum(bd_l)                             as bd_l,
+                               sum(ad_n)                             as ad_n,
+                               sum(ad_w)                             as ad_w,
+                               sum(ad_wn)                            as ad_wn,
+                               sum(ad_nw)                            as ad_nw,
+                               sum(ad_l)                             as ad_l
                         from per_day
                         group by grp
                         order by grp )
 select *
-from amounts_total;
+from per_day;
 ```
