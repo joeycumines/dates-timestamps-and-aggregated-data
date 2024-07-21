@@ -85,10 +85,12 @@ Implement a "narrowing" timestamp-to-date conversion function, which can generat
 within date ranges. Combine both "wide" and "narrow" variants to handle different contexts.
 
 ```js
-// Example: "last 7 days" filter with explicit end time
+// Example: Frontend "last 7 days" filter with explicit end time. "Widens" the endTime, capturing any in-progress day.
+// Assumes the backend only matches dates fully within the range, but no impact if it doesn't (widening is idempotent).
 
 const now = new Date();
 const startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+// N.B. omits the idempotency-enforcing check for brevity
 const endTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
 
 updateReportContext(startTime.toISOString(), endTime.toISOString());
