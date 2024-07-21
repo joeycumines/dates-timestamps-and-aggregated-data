@@ -102,7 +102,7 @@ N.B. This was the initial variant, and is therefore the most well tested.
 
 Example functions for conversion and widening ranges:
 
-```postgresql
+```sql
 -- returns the first and last (UTC) date fully within the timestamp range, preserving null values
 -- WARNING: queries that omit one of the bounds should explicitly omit the filter criteria (unrelated SQL performance note)
 create or replace function convert_timestamp_range_to_dates(start_time timestamptz, end_time timestamptz)
