@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -163,6 +164,12 @@ func ExampleExampleTimestampToDate() {
 
 func TestExampleTimestampToDate(t *testing.T) {
 	TestTimestampToDate(t, TimestampRangeValues, DateValues, ExampleMatches, ExampleTimestampToDate)
+}
+
+func TestTestTimestampToDateExternal_yoDawg(t *testing.T) {
+	if err := TestTimestampToDateExternal(context.Background(), TimestampRangeValues, DateValues, ExampleMatches, ExampleTimestampToDate); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestExampleDateToTimestamp(t *testing.T) {

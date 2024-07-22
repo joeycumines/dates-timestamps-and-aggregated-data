@@ -3,6 +3,8 @@
 package baseline
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -179,13 +181,21 @@ var _ DateToTimestamp = ExampleDateToTimestamp // compile-time type assertion (u
 // AssertDate ensures that s is a valid date.
 func AssertDate(t *testing.T, s string) {
 	t.Helper()
-	d, err := time.ParseInLocation(DateFormat, s, time.UTC)
-	if err != nil {
+	if err := ValidateDate(s); err != nil {
 		t.Fatal(err)
 	}
-	if d.Format(DateFormat) != s {
-		t.Fatal(`date format mismatch`)
+}
+
+// ValidateDate ensures that s is a valid date.
+func ValidateDate(s string) error {
+	d, err := time.ParseInLocation(DateFormat, s, time.UTC)
+	if err != nil {
+		return err
 	}
+	if d.Format(DateFormat) != s {
+		return errors.New(`date format mismatch`)
+	}
+	return nil
 }
 
 // RangeTestCases is a utility for iterating on all combinations of ranges and
@@ -217,6 +227,24 @@ func RangeTestCases(ranges [][2]string, values []string, f func(r [2]string, v s
 // TestTimestampToDate may be used to test a [TimestampToDate] implementation.
 // The ranges are timestamps, and the values are dates.
 func TestTimestampToDate(t *testing.T, ranges [][2]string, values []string, matches map[[3]string]struct{}, convert TimestampToDate) {
+	if err := testTimestampToDate(nil, t, ranges, values, matches, convert); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTimestampToDateExternal is a variant of [TestTimestampToDate] that does
+// not require a testing.T instance.
+func TestTimestampToDateExternal(
+	ctx context.Context,
+	ranges [][2]string,
+	values []string,
+	matches map[[3]string]struct{},
+	convert TimestampToDate,
+) error {
+	return testTimestampToDate(ctx, nil, ranges, values, matches, convert)
+}
+
+func testTimestampToDate(ctx context.Context, t *testing.T, ranges [][2]string, values []string, matches map[[3]string]struct{}, convert TimestampToDate) error {
 	result := make(map[[3]string]struct{})
 	setMatches := func(r [2]string, v string, matches bool) {
 		k := [3]string{r[0], r[1], v}
@@ -227,17 +255,44 @@ func TestTimestampToDate(t *testing.T, ranges [][2]string, values []string, matc
 		}
 	}
 
-	t.Cleanup(func() {
-		t.Logf(`actual matches: %s`,
+	var logf func(string, ...any)
+	if t != nil {
+		logf = t.Logf
+	} else {
+		logf = func(s string, a ...any) { fmt.Printf(s+"\n", a...) }
+	}
+
+	cleanup := func() {
+		logf(`actual matches: %s`,
 			strings.NewReplacer(
 				"[3]string{", "{",
 				`struct {}{}`, `{}`,
 				`struct{}{}`, `{}`,
 			).Replace(fmt.Sprintf("%#v", result)))
-	})
+	}
+	if t != nil {
+		t.Cleanup(cleanup)
+	} else {
+		defer cleanup()
+	}
 
 	RangeTestCases(ranges, values, func(r [2]string, value string) bool {
-		t.Run(r[0]+`-`+r[1]+`-`+value, func(t *testing.T) {
+		name := r[0] + `-` + r[1] + `-` + value
+		f := func(t *testing.T) {
+			logf := logf
+			var fatalf func(string, ...any)
+			if t != nil {
+				logf = t.Logf
+				fatalf = t.Fatalf
+			} else {
+				l := logf
+				logf = func(f string, args ...any) { l(`[%s] `+f, append([]any{name}, args...)...) }
+				fatalf = func(f string, args ...any) {
+					logf(f, args...)
+					panic(fmt.Sprintf(f, args...))
+				}
+			}
+
 			var startTime, endTime time.Time
 			if r[0] != `` {
 				var err error
@@ -254,14 +309,20 @@ func TestTimestampToDate(t *testing.T, ranges [][2]string, values []string, matc
 				}
 			}
 
-			AssertDate(t, value)
+			if err := ValidateDate(value); err != nil {
+				fatalf(`value error: %v`, err)
+			}
 
 			startDate, endDate := convert(startTime, endTime)
 			if r[0] != `` {
-				AssertDate(t, startDate)
+				if err := ValidateDate(startDate); err != nil {
+					fatalf(`startDate error: %v`, err)
+				}
 			}
 			if r[1] != `` {
-				AssertDate(t, endDate)
+				if err := ValidateDate(endDate); err != nil {
+					fatalf(`endDate error: %v`, err)
+				}
 			}
 
 			actual := MatchesDate(startDate, endDate, value)
@@ -271,9 +332,21 @@ func TestTimestampToDate(t *testing.T, ranges [][2]string, values []string, matc
 			if _, expected := matches[[3]string{r[0], r[1], value}]; actual != expected {
 				t.Fatalf(`expected %t, got %t: [%s, %s] matching %s`, expected, actual, startDate, endDate, value)
 			}
-		})
-		return true
+		}
+		if t != nil {
+			t.Run(name, f)
+		} else {
+			f(nil)
+		}
+
+		return ctx == nil || ctx.Err() == nil
 	})
+
+	if ctx == nil {
+		return nil
+	}
+
+	return context.Cause(ctx)
 }
 
 // TestDateToTimestamp may be used to test a [DateToTimestamp] implementation.
