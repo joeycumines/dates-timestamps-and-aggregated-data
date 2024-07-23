@@ -463,6 +463,10 @@ func FuzzTimestampToDate(f *testing.F, ranges [][2]string, values []string, conv
 				time.Unix(0, endTimeEpoch).UTC().Format(TimestampFormat))
 		}
 
+		// normalise to the nearest minute (seconds not representable in encoded format
+		startTimeOffset = startTimeOffset / 60 * 60
+		endTimeOffset = endTimeOffset / 60 * 60
+
 		var startTime, endTime time.Time
 		if !ignoreStart {
 			startTime = time.Unix(0, startTimeEpoch).In(time.FixedZone("", startTimeOffset))
@@ -474,6 +478,9 @@ func FuzzTimestampToDate(f *testing.F, ranges [][2]string, values []string, conv
 		value := time.Unix(0, valueEpoch).In(time.UTC).Format(DateFormat)
 
 		startDate, endDate := convert(startTime, endTime)
+		if a, b := ExampleTimestampToDate(startTime, endTime); a != startDate || b != endDate {
+			t.Errorf("differed from baseline for [%s, %s): expected [%s, %s], got [%s, %s]", startTime.Format(TimestampFormat), endTime.Format(TimestampFormat), a, b, startDate, endDate)
+		}
 
 		if ignoreStart != (startDate == ``) {
 			t.Fatalf("ignoreStart=%t, startDate=%s", ignoreStart, startDate)

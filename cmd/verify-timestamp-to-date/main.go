@@ -6,10 +6,9 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"errors"
 	"github.com/joeycumines/dates-timestamps-and-aggregated-data/baseline"
+	"github.com/joeycumines/dates-timestamps-and-aggregated-data/cmd/internal/timestamptodate"
 	"github.com/joeycumines/dates-timestamps-and-aggregated-data/internal/extcmd"
 	"os"
 	"time"
@@ -25,44 +24,20 @@ func main() {
 func run(ctx context.Context, command string, args ...string) error {
 	return extcmd.Run[[2]time.Time, [2]string](
 		ctx,
+		nil,
 		command,
 		args,
-		func(b []byte, input [2]time.Time) ([]byte, error) {
-			if input[0] != (time.Time{}) {
-				b = input[0].AppendFormat(b, time.RFC3339Nano)
-			}
-
-			b = append(b, '\t')
-
-			if input[1] != (time.Time{}) {
-				b = input[1].AppendFormat(b, time.RFC3339Nano)
-			}
-
-			b = append(b, '\n')
-
-			return b, nil
-		},
+		"",
+		timestamptodate.AppendInput,
 		bufio.ScanLines,
-		func(b []byte) (output [2]string, _ error) {
-			i := bytes.IndexRune(b, '\t')
-			if i == -1 {
-				return output, errors.New("unexpected output format")
-			}
-			return [2]string{string(b[:i]), string(b[i+1:])}, nil
-		},
+		timestamptodate.ParseOutput,
 		func(ctx context.Context, call func(input [2]time.Time) ([2]string, error)) error {
 			return baseline.TestTimestampToDateExternal(
 				ctx,
 				baseline.TimestampRangeValues,
 				baseline.DateValues,
 				baseline.ExampleMatches,
-				func(startTime, endTime time.Time) (startDate, endDate string) {
-					v, err := call([2]time.Time{startTime, endTime})
-					if err != nil {
-						panic(err)
-					}
-					return v[0], v[1]
-				},
+				timestamptodate.CallToConvert(call),
 			)
 		},
 	)

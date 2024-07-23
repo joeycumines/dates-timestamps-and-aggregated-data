@@ -25,13 +25,19 @@ func Run[
 	Output any,
 ](
 	ctx context.Context,
+	calledOnEntry func(),
 	command string,
 	args []string,
+	dir string,
 	appendInput func(b []byte, input Input) ([]byte, error),
 	splitOutput bufio.SplitFunc,
 	parseOutput func(b []byte) (Output, error),
 	f func(ctx context.Context, call func(input Input) (Output, error)) error,
 ) error {
+	if calledOnEntry != nil {
+		calledOnEntry()
+	}
+
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
@@ -79,6 +85,7 @@ func Run[
 	}()
 
 	c := exec.CommandContext(ctx, command, args...)
+	c.Dir = dir
 	c.Stderr = os.Stderr
 	c.Stdin = rIn
 	c.Stdout = wOut
