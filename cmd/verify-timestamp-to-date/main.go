@@ -8,8 +8,8 @@ import (
 	"bufio"
 	"context"
 	"github.com/joeycumines/dates-timestamps-and-aggregated-data/baseline"
-	"github.com/joeycumines/dates-timestamps-and-aggregated-data/cmd/internal/timestamptodate"
 	"github.com/joeycumines/dates-timestamps-and-aggregated-data/internal/extcmd"
+	"github.com/joeycumines/dates-timestamps-and-aggregated-data/internal/timestamptodate"
 	"os"
 	"time"
 )

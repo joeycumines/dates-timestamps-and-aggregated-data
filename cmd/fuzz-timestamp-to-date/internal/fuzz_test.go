@@ -5,8 +5,8 @@ import (
 	"context"
 	"github.com/joeycumines/dates-timestamps-and-aggregated-data/baseline"
 	"github.com/joeycumines/dates-timestamps-and-aggregated-data/cmd/fuzz-timestamp-to-date/internal/configuration"
-	"github.com/joeycumines/dates-timestamps-and-aggregated-data/cmd/internal/timestamptodate"
 	"github.com/joeycumines/dates-timestamps-and-aggregated-data/internal/extcmd"
+	"github.com/joeycumines/dates-timestamps-and-aggregated-data/internal/timestamptodate"
 	"testing"
 	"time"
 )
